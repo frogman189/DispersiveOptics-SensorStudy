@@ -45,6 +45,48 @@ def add_gaussian_noise(signal: np.ndarray,
 
 
 
+def plot_presure_and_noise_presure_over_time(p, kgrid, snr_db=20):
+    """
+    Plot the summed raw pressure and noise-added pressure over time, side by side.
+
+    Args:
+        p (ndarray): Array of shape (Nt, ...) containing raw pressures.
+        kgrid: Object with attribute t_array of shape (1, Nt) or (Nt,).
+        snr_db (float): Desired signal-to-noise ratio in dB for noise addition.
+    """
+    # Add Gaussian noise to p
+
+    noise_p = add_gaussian_noise(p, snr_db=snr_db)
+
+    # Sum over spatial axes to get time series (shape: Nt)
+    p_total         = np.sum(p,      axis=tuple(range(1, p.ndim)))
+    p_total_noisy   = np.sum(noise_p, axis=tuple(range(1, noise_p.ndim)))
+
+    # Flatten time axis
+    t = kgrid.t_array.flatten()
+
+    # Create side-by-side plots
+    plt.figure(figsize=(12, 4))
+
+    # Raw pressure
+    ax1 = plt.subplot(1, 2, 1)
+    ax1.plot(t, p_total)
+    ax1.set_title("Raw Pressure vs Time")
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Summed Pressure")
+
+    # Noisy pressure
+    ax2 = plt.subplot(1, 2, 2)
+    ax2.plot(t, p_total_noisy)
+    ax2.set_title(f"Noisy Pressure (SNR = {snr_db} dB)")
+    ax2.set_xlabel("Time (s)")
+    ax2.set_ylabel("Summed Pressure")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
 def apply_match_filter(p: np.ndarray, kgrid, snr_db: float = 20, win_samples: int = 100) -> dict:
     """
     Apply a matched filter to a spatial pulse to detect its arrival time, with detailed visualization.
@@ -120,6 +162,52 @@ def apply_match_filter(p: np.ndarray, kgrid, snr_db: float = 20, win_samples: in
         'matched_output':  corr_pos,
         'detection_time':  t_detect
     }
+
+
+def plot_match_filter_results(results: dict,
+                            t: np.ndarray,
+                            snr_db: float):
+    
+    # Unpack results
+    noise_only     = results['noise_only']
+    clean_pulse    = results['clean_pulse']
+    received       = results['received']
+    lags_pos       = results['lags']
+    corr_pos       = results['matched_output']
+    t_detect       = results['detection_time']
+
+    # Create figure
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+    # Top-left: Noise only
+    axs[0, 0].plot(t * 1e6, noise_only, color='gray')
+    axs[0, 0].set_title(f'Noise only (SNR={snr_db} dB)')
+    axs[0, 0].set_ylabel('Amplitude')
+    axs[0, 0].grid(True)
+    # Top-right: Clean pulse
+    axs[0, 1].plot(t * 1e6, clean_pulse, 'g')
+    axs[0, 1].set_title('Clean signal')
+    axs[0, 1].grid(True)
+    # Bottom-left: Noisy & matched
+    axs[1, 0].plot(t * 1e6, received, 'b', label='Noisy')
+    axs[1, 0].plot(lags_pos * 1e6, corr_pos, 'r', label='Matched')
+    axs[1, 0].axvline(t_detect * 1e6, color='k', ls='--',
+                      label=f'Peak @ {t_detect*1e6:.2f} µs')
+    axs[1, 0].set_title('Noisy & Matched Output')
+    axs[1, 0].set_xlabel('Time (µs)')
+    axs[1, 0].set_ylabel('Amplitude')
+    axs[1, 0].legend()
+    axs[1, 0].grid(True)
+    # Bottom-right: Clean & matched
+    axs[1, 1].plot(t * 1e6, clean_pulse, 'g', label='Clean')
+    axs[1, 1].plot(lags_pos * 1e6, corr_pos, 'r', label='Matched')
+    axs[1, 1].set_title('Clean & Matched Output')
+    axs[1, 1].set_xlabel('Time (µs)')
+    axs[1, 1].legend()
+    axs[1, 1].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+    
 
 
 

@@ -1,9 +1,12 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from kwave.kgrid import kWaveGrid
 from kwave.kmedium import kWaveMedium
 from kwave.ksource import kSource
 from kwave.options.simulation_options import SimulationOptions
 from kwave.options.simulation_execution_options import SimulationExecutionOptions
+from kwave.kspaceFirstOrder3D import kspaceFirstOrder3D
+from kwave.kspaceFirstOrder2D import kspaceFirstOrder2D
 
 
 def setup_simulation(simulation_type):
@@ -89,8 +92,10 @@ def setup_simulation(simulation_type):
     # SIMULATION OPTIONS
     # =========================================================================
     # Create properly structured options objects
+
+    pml_size=10
     simulation_options = SimulationOptions(
-        pml_size=10,             # Perfectly Matched Layer size [grid points]
+        pml_size=pml_size,             # Perfectly Matched Layer size [grid points]
         pml_alpha=2,             # PML absorption [Nepers/grid point]
         pml_inside=False,        # PML outside the grid
         data_cast='single',      # Use single precision
@@ -122,5 +127,73 @@ def setup_simulation(simulation_type):
         'dx': dx,
         'dy': dy,
         'dz': dz,
-        'simulation_type': simulation_type
+        'simulation_type': simulation_type,
+        'pml_size': pml_size,
+        'sensor_plane': pml_size + Nz -1
     }
+
+
+def run_simulation(sim_params, sensor):
+    """
+    Run simulation and apply sensitivity to results.
+    
+    Args:
+        sim_params: from setup_simulation()
+        sensor: kSensor object with sensitivity_map
+        
+    Returns:
+        sensor_data: Sensitivity-adjusted recorded data
+    """
+    # Run simulation (sensor.mask is used during simulation)
+    raw_data = kspaceFirstOrder3D(
+        kgrid=sim_params['kgrid'],
+        medium=sim_params['medium'],
+        source=sim_params['source'],
+        sensor=sensor,
+        simulation_options=sim_params['simulation_options'],
+        execution_options=sim_params['execution_options']
+    )
+    
+    return raw_data
+
+
+def visualize_source(sim_params):
+    """Visualize the initial pressure distribution (p0)"""
+    p0 = sim_params['source'].p0
+
+    # Create figure
+    fig = plt.figure(figsize=(12, 5))
+
+    if sim_params['simulation_type'] == '3D':
+        # ... your existing 3D code ...
+        ax1 = fig.add_subplot(131)
+        ax1.imshow(p0[:, :, sim_params['source_pos'][2]], cmap='hot')
+        ax1.set_title('XY Plane')
+        ax1.set_xlabel('X')
+        ax1.set_ylabel('Y')
+
+        ax2 = fig.add_subplot(132)
+        ax2.imshow(p0[:, sim_params['source_pos'][1], :], cmap='hot')
+        ax2.set_title('XZ Plane')
+        ax2.set_xlabel('X')
+        ax2.set_ylabel('Z')
+
+        ax3 = fig.add_subplot(133)
+        ax3.imshow(p0[sim_params['source_pos'][0], :, :], cmap='hot')
+        ax3.set_title('YZ Plane')
+        ax3.set_xlabel('Y')
+        ax3.set_ylabel('Z')
+
+        plt.suptitle('Initial Pressure Distribution (p0)')
+        plt.tight_layout()
+        plt.show()
+
+    else:
+        # Fix: create an Axes on the Figure and call imshow there
+        ax = fig.add_subplot(1, 1, 1)
+        ax.imshow(p0, cmap='hot')
+        ax.set_title('Initial Pressure Distribution (p0)')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        plt.tight_layout()
+        plt.show()

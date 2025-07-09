@@ -17,6 +17,10 @@ def _create_point_sensor(sim_params, **kwargs):
     sensor.mask = np.zeros((Nx, Ny, Nz), dtype=bool)
     sensor.mask[source_pos[0], source_pos[1], Nz - 1] = True
 
+    sens = np.zeros((Nx, Ny), dtype=float)
+    sens[source_pos[0], source_pos[1]] = 1.0
+    sensor.sensitivity_map = sens
+
     print("Point sensor created!")
 
     return sensor
@@ -340,7 +344,7 @@ def create_sensor_3D(sensor_type: int, sim_params: dict, **kwargs):
     return sensor
 
 
-def plot_sensor_sensitivity(sensor, sim_params, sensor_type: int, output_dir: str):
+def plot_sensor_sensitivity_and_save(sensor, sim_params, sensor_type: int, output_dir: str):
     """Plot sensor mask and sensitivity side by side in the XY plane, and save to disk.
 
     Args:
@@ -414,3 +418,45 @@ def plot_sensor_sensitivity(sensor, sim_params, sensor_type: int, output_dir: st
     plt.close(fig)
 
     print(f"Saved sensor plot to: {save_path}")
+
+
+def plot_sensor_sensitivity(sensor, sim_params):
+    """Plot sensor mask and sensitivity side by side in the XY plane."""
+
+    kgrid = sim_params['kgrid']
+    Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+
+    # Determine 2D mask and sensitivity based on simulation dimension
+    if sim_params.get('simulation_type') == '3D':
+        mask_2d = sensor.mask[:, :, Nz - 1]
+        sens_map = getattr(sensor, 'sensitivity_map', None)
+        sens_2d = sens_map if sens_map is not None else None
+        #sens_2d = sens_map[:, :, z_idx] if sens_map is not None else None
+    else:
+        mask_2d = sensor.mask
+        sens_map = getattr(sensor, 'sensitivity_map', None)
+        sens_2d = sens_map if sens_map is not None else None
+
+    # Prepare sensitivity for plotting (fallback to mask if no sensitivity_map)
+    if sens_2d is None:
+        sens_plot = mask_2d.astype(float)
+    else:
+        sens_plot = sens_2d
+
+    # Plot side by side
+    plt.figure(figsize=(12, 6))
+    ax1 = plt.subplot(1, 2, 1)
+    ax1.imshow(mask_2d.T, origin='lower', cmap='gray', vmin=0, vmax=1)
+    ax1.set_title('Sensor Mask')
+    ax1.set_xlabel('X Position [grid points]')
+    ax1.set_ylabel('Y Position [grid points]')
+
+    ax2 = plt.subplot(1, 2, 2, sharex=ax1, sharey=ax1)
+    im = ax2.imshow(sens_plot.T, origin='lower', cmap='viridis')
+    plt.colorbar(im, ax=ax2, label='Sensitivity')
+    ax2.set_title('Sensitivity Map')
+    ax2.set_xlabel('X Position [grid points]')
+    ax2.set_ylabel('')
+
+    plt.tight_layout()
+    plt.show()

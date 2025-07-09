@@ -63,35 +63,97 @@ def process_sensor_data(sensor_mask: np.ndarray,
     return mask_flat, weighted_p, info_dict
 
 
-def find_sensitivity_extremes(sensitivity_map: np.ndarray):
+def find_sensitivity_extremes(info_dict, sensitivity_map: np.ndarray):
     """
-    Find the position of the maximum value and the minimum non-zero value
-    in a 2D sensitivity_map. If multiple positions tie, returns the first one.
-
-    Args:
-        sensitivity_map: 2D numpy array of sensitivities.
-
+    Given a 2D sensitivity_map array, find:
+      1. max_pos: the (row, col) of the global maximum value; 
+         if there are ties, pick the one closest to the center of the map.
+      2. min_pos: the (row, col) of the smallest nonzero value (excluding the max value);
+         if there are ties, pick the one farthest from the center.
+    
     Returns:
-        max_pos: Tuple[int, int] for the location of the global maximum.
-        min_non_zero_pos: Tuple[int, int] for the location of the minimum non-zero value,
-                          or None if there are no non-zero entries.
+        max_pos: tuple of ints (row, col) or None if map is empty
+        min_pos: tuple of ints (row, col) or None if no valid nonzero minima exist
     """
-    # --- Maximum ---
-    max_val = sensitivity_map.max()
+    h, w = sensitivity_map.shape
+    center = np.array([h / 2, w / 2])
+
+    # 1) Find max positions
+    max_val = np.nanmax(sensitivity_map)
     max_positions = np.argwhere(sensitivity_map == max_val)
-    max_pos = tuple(max_positions[0])  # first occurrence
+    # compute distances to center, pick the closest
+    dists_to_center = np.linalg.norm(max_positions - center, axis=1)
+    max_idx = np.argmin(dists_to_center)
+    max_pos = tuple(max_positions[max_idx])
 
-    # --- Minimum non-zero ---
-    non_zero_mask = sensitivity_map != 0
-    if non_zero_mask.any():
-        non_zero_vals = sensitivity_map[non_zero_mask]
-        min_non_zero_val = non_zero_vals.min()
-        min_positions = np.argwhere(sensitivity_map == min_non_zero_val)
-        min_non_zero_pos = tuple(min_positions[0])  # first occurrence
+    # 2) Find min non-zero (and not equal to max_val) positions
+    mask = (sensitivity_map != 0)
+    if np.any(mask):
+        nonzero_vals = sensitivity_map[mask]
+        min_val = nonzero_vals.min()
+        min_positions = np.argwhere(sensitivity_map == min_val)
+        # compute distances, pick the farthest
+        dists_min = np.linalg.norm(min_positions - center, axis=1)
+        min_idx = np.argmax(dists_min)
+        min_pos = tuple(min_positions[min_idx])
+
+        sensor_idx_min = next(
+            (idx for idx, data in info_dict.items() if data['grid_index'] == min_pos),
+            None
+        )
     else:
-        min_non_zero_pos = None
+        min_pos = None
+        sensor_idx_min = None
+        
+    sensor_idx_max = next(
+        (idx for idx, data in info_dict.items() if data['grid_index'] == max_pos),
+        None
+    )
 
-    return max_pos, min_non_zero_pos
+    return max_pos, min_pos, sensor_idx_max, sensor_idx_min
+
+
+def plot_raw_pressure(raw_data, weighted_data, kgrid, sensor_indices):
+    """
+    Compare raw and weighted pressure at multiple sensor points,
+    plotting each sensor in its own subplot.
+    
+    Args:
+        raw_data: dict with key 'p' of shape (Nt,) or (Nt, n_sensors)
+        weighted_data: same shape as raw_data['p']
+        kgrid: object with t_array attribute (1×Nt or Nt×1)
+        sensor_indices: list of int sensor indices to plot
+    """
+    plots_names = ["Pressure over time in max sensor point", "Pressure over time in max sensor point"]
+    t = kgrid.t_array.flatten()
+    n = len(sensor_indices)
+    n = sum(x is not None for x in sensor_indices)
+    fig, axes = plt.subplots(1, n, figsize=(5*n, 4), sharex=True, sharey=True)
+    if n == 1:
+        axes = [axes]
+
+    for ax, sensor_idx, plot_name in zip(axes, sensor_indices, plots_names):
+        if (sensor_idx is not None):
+            # pull out 1D traces
+            if raw_data['p'].ndim == 1:
+                raw_p      = raw_data['p']
+                weighted_p = weighted_data
+            else:
+                raw_p      = raw_data['p'][:, sensor_idx]
+                weighted_p = weighted_data[:, sensor_idx]
+
+            ax.plot(t, raw_p,      label='Raw',     alpha=0.5)
+            #ax.plot(t, weighted_p, '--', label='Weighted')
+
+            ax.set_title(f'{plot_name}')
+            ax.set_xlabel('Time (s)')
+            ax.grid(True)
+            if ax is axes[0]:
+                ax.set_ylabel('Pressure (Pa)')
+            ax.legend()
+
+    plt.tight_layout()
+    plt.show()
 
 
 

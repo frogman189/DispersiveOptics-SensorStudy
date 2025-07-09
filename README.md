@@ -1,4 +1,10 @@
 # DispersiveOptics-SensorStudy
+
+## Notebooks
+
+- [Demo analysis notebook](./my_project_demo.ipynb)   
+
+
 This repository provides tools and simulations for evaluating how different optical sensor geometries and types perform when detecting a single red blood cell (modeled as a point source) in a dispersive medium. It’s intended as a compact framework for your “Optics in Dispersive Media & Biomedical Imaging” course project.
 
 Key features:
