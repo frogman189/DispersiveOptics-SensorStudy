@@ -9,7 +9,7 @@ from kwave.kspaceFirstOrder3D import kspaceFirstOrder3D
 from kwave.kspaceFirstOrder2D import kspaceFirstOrder2D
 
 
-def setup_simulation(simulation_type):
+def setup_simulation(simulation_type, source_position='center'):
     """
     Set up a 2D/ 3D simulation environment using proper k-Wave classes
     for simulating a red blood cell illuminated by laser light.
@@ -79,8 +79,20 @@ def setup_simulation(simulation_type):
     # Initialize p0 as a numpy array
     if simulation_type == '3D':
         p0 = np.zeros((Nx, Ny, Nz), dtype=np.float32)
-        source_pos = [Nx//2, Ny//2, 0]
-        p0[Nx//2, Ny//2, 0] = 1e6 # Point source
+        if source_position == 'center':
+            source_pos = [Nx//2, Ny//2, 0]
+            p0[Nx//2, Ny//2, 0] = 1e6
+        elif source_position == 'lateral_offset':
+            offset_y = Ny//4
+            source_pos = [Nx//2, Ny//2 + offset_y, 0]
+            p0[Nx//2, Ny//2 + offset_y, 0] = 1e6
+        else: #else Diagonal Offset
+            offset_x = Nx//4
+            offset_y = Ny//4
+            source_pos = [Nx//2 + offset_x, Ny//2 + offset_y, 0]
+            p0[Nx//2 + offset_x, Ny//2 + offset_y, 0] = 1e6
+
+            
     else:
         p0 = np.zeros((N, N), dtype=np.float32)
         source_pos = [N//2, N//2]
