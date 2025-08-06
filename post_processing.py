@@ -160,7 +160,7 @@ def plot_raw_pressure(raw_data, weighted_data, kgrid, sensor_indices):
 
 def analyze_sensor_performance(p_data, t_array, sensor_mask=None, sensitivity_map=None, weighted_p=None):
     """
-    Compute performance metrics for a sensor's pressure recordings.
+    Compute performance metrics for a sensor's pressure recordings using ONLY weighted pressure.
     
     Args:
         p_data (np.ndarray): Pressure data array (shape: Nt or Nt x N_sensor_points)
@@ -169,7 +169,7 @@ def analyze_sensor_performance(p_data, t_array, sensor_mask=None, sensitivity_ma
         sensitivity_map (np.ndarray, optional): Sensitivity weights matching sensor_mask
         
     Returns:
-        dict: Dictionary of metrics including time-wise sums across all sensor points
+        dict: Dictionary of metrics calculated using weighted pressure only
     """
     # Ensure pressure data is 2D (even for single sensor)
     if p_data.ndim == 1:
@@ -178,7 +178,7 @@ def analyze_sensor_performance(p_data, t_array, sensor_mask=None, sensitivity_ma
     Nt, N_points = p_data.shape
     dt = t_array[1] - t_array[0]
     
-    # Initialize weighted pressure array (if sensitivity provided)
+    # Initialize weighted pressure array (required)
     if weighted_p is not None:
         p_weighted = weighted_p
     elif sensitivity_map is not None and sensor_mask is not None:
@@ -188,60 +188,83 @@ def analyze_sensor_performance(p_data, t_array, sensor_mask=None, sensitivity_ma
         sens_vals = sens_flat[sensor_idx] 
         p_weighted = p_data * sens_vals[np.newaxis, :]
     else:
-        p_weighted = None
+        raise ValueError("Either weighted_p or sensitivity_map+sensor_mask must be provided")
     
-    # Time-wise sums across all sensor points
-    p_total = np.sum(p_data, axis=1)            # Sum of raw pressures (shape: Nt)
-    p_total_weighted = np.sum(p_weighted, axis=1) if p_weighted is not None else None
+    # Time-wise sum of weighted pressures
+    p_total_weighted = np.sum(p_weighted, axis=1)
     
     # Frequency domain setup
     freqs = fftfreq(Nt, dt)
     
     metrics = {
-        'point_metrics': [],           # Metrics for each individual sensor point
+        'point_metrics': [],           # Metrics for each sensor point
         'aggregate_metrics': {},       # Statistics across all sensor points
         'time_series_metrics': {       # Time-wise summed signals
-            'p_total': p_total,
             'p_total_weighted': p_total_weighted
         }
     }
     
-    # Process each sensor point (original logic)
+    # Process each sensor point using weighted pressure only
     for i in range(N_points):
-        p = p_data[:, i]
-        p_w = p_weighted[:, i] if p_weighted is not None else None
+        p_w = p_weighted[:, i]
         
-        # Time-domain metrics (unchanged)
-        peaks, _ = find_peaks(np.abs(p), height=0.5*np.max(np.abs(p)))
+        # Find peaks in weighted pressure
+        peaks, _ = find_peaks(np.abs(p_w), height=0.5*np.max(np.abs(p_w)))
         if len(peaks) == 0:
-            first_peak_idx = last_peak_idx = np.argmax(np.abs(p))
+            first_peak_idx = last_peak_idx = np.argmax(np.abs(p_w))
         else:
             first_peak_idx = peaks[0]
             last_peak_idx = peaks[-1]
         
         point_metrics = {
-            'peak_pressure': np.max(np.abs(p)),
-            'time_to_peak': t_array[np.argmax(np.abs(p))],
-            'peak_to_peak': np.ptp(p),
-            'energy': trapezoid(p**2, t_array),
-            'weighted_energy': trapezoid(p_w**2, t_array) if p_w is not None else None,
-            'signal_duration': t_array[last_peak_idx] - t_array[first_peak_idx],
-            'dominant_frequency': freqs[np.argmax(np.abs(fft(p)))],
-            'rms_pressure': np.sqrt(np.mean(p**2))
+            'weighted_peak_pressure': np.max(np.abs(p_w)),
+            'weighted_time_to_peak': t_array[np.argmax(np.abs(p_w))],
+            'weighted_peak_to_peak': np.ptp(p_w),
+            'weighted_energy': trapezoid(p_w**2, t_array),
+            'weighted_signal_duration': t_array[last_peak_idx] - t_array[first_peak_idx],
+            'weighted_dominant_frequency': freqs[np.argmax(np.abs(fft(p_w)))],
+            'weighted_rms_pressure': np.sqrt(np.mean(p_w**2))
         }
         metrics['point_metrics'].append(point_metrics)
     
-    # Aggregate statistics (unchanged)
-    peak_pressures = [m['peak_pressure'] for m in metrics['point_metrics']]
-    energies = [m['energy'] for m in metrics['point_metrics']]
+    # Aggregate statistics using weighted values only
+    weighted_peak_pressures = [m['weighted_peak_pressure'] for m in metrics['point_metrics']]
+    weighted_energies = [m['weighted_energy'] for m in metrics['point_metrics']]
     
     metrics['aggregate_metrics'] = {
-        'mean_peak_pressure': np.mean(peak_pressures),
-        'std_peak_pressure': np.std(peak_pressures),
-        'max_peak_pressure': np.max(peak_pressures),
-        'total_energy': np.sum(energies),
-        'energy_uniformity': np.std(energies) / np.mean(energies),
-        'mean_time_to_peak': np.mean([m['time_to_peak'] for m in metrics['point_metrics']])
+        'mean_peak_pressure': np.mean(weighted_peak_pressures),
+        'std_peak_pressure': np.std(weighted_peak_pressures),
+        'max_peak_pressure': np.max(weighted_peak_pressures),
+        'total_energy': np.sum(weighted_energies),
+        'energy_uniformity': np.std(weighted_energies) / np.mean(weighted_energies),
+        'mean_time_to_peak': np.mean([m['weighted_time_to_peak'] for m in metrics['point_metrics']])
     }
     
     return metrics
+
+
+
+def print_detector_metrics(metrics: dict, detection_comparison: dict = None):
+    """
+    Prints detector metrics and detection thresholds in a standardized format.
+    
+    Args:
+        metrics: Dictionary from calculate_detector_metrics()
+                 (contains NEP, D*, noise_floor, responsivity, signal_response)
+        detection_comparison: Dictionary from compare_detection_thresholds()
+                             (contains raw/filtered thresholds and SNRs)
+    """
+    print("\n=== DETECTOR PERFORMANCE METRICS ===")
+    print(f"{'Noise Equivalent Pressure (NEP)':<35}: {metrics['NEP']:.2e} Pa")
+    print(f"{'Detectivity (D*)':<35}: {metrics['D_star']:.2e} Jones")
+    print(f"{'Noise Floor':<35}: {metrics['noise_floor']:.2e} Pa")
+    print(f"{'Responsivity':<35}: {metrics['responsivity']:.2e} (output/Pa)")
+    print(f"{'Signal Response':<35}: {metrics['signal_response']:.2e} Pa")
+    
+    if detection_comparison:
+        print("\n=== DETECTION THRESHOLD COMPARISON ===")
+        print(f"{'Raw Detection Threshold (5σ)':<35}: {detection_comparison['raw_threshold_pa']:.2e} Pa")
+        print(f"{'Filtered Detection Threshold (5σ)':<35}: {detection_comparison['filtered_threshold_pa']:.2e} Pa")
+        print(f"{'SNR Improvement':<35}: {detection_comparison['raw_snr']:.1f} → {detection_comparison['filtered_snr']:.1f}")
+        print(f"{'Effective Improvement Factor':<35}: {detection_comparison['improvement_factor']:.1f}x")
+    print("="*50)

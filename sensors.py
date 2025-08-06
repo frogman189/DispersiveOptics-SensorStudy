@@ -2,6 +2,7 @@ import numpy as np
 from kwave.ksensor import kSensor
 import matplotlib.pyplot as plt
 import os
+import datetime
 
 
 def _create_point_sensor(sim_params, **kwargs):
@@ -11,14 +12,18 @@ def _create_point_sensor(sim_params, **kwargs):
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
     source_pos = sim_params['source_pos']
+    
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
 
     sensor = kSensor()
     sensor.record = ['p']
     sensor.mask = np.zeros((Nx, Ny, Nz), dtype=bool)
-    sensor.mask[source_pos[0], source_pos[1], Nz - 1] = True
+    sensor.mask[center_x, center_y, Nz - 1] = True
 
     sens = np.zeros((Nx, Ny), dtype=float)
-    sens[source_pos[0], source_pos[1]] = 1.0
+    sens[center_x, center_y] = 1.0
     sensor.sensitivity_map = sens
 
     print("Point sensor created!")
@@ -40,12 +45,16 @@ def _create_linear_delta_sensor(sim_params, **kwargs):
     length = kwargs.get('length', 1e-3)
     pts = max(1, round(length / dx))
 
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
+
     # Compute the starting x and central index
-    start_x = source_pos[0] - pts // 2
+    start_x = center_x - pts // 2
     center_idx = start_x + pts // 2
     # Ensure indices are within bounds
     center_idx = int(np.clip(center_idx, 0, Nx - 1))
-    center_y = int(np.clip(source_pos[1], 0, Ny - 1))
+    center_y = int(np.clip(center_y, 0, Ny - 1))
 
     sensor = kSensor()
     sensor.record = ['p']
@@ -53,7 +62,7 @@ def _create_linear_delta_sensor(sim_params, **kwargs):
     sensor.mask = np.zeros((Nx, Ny, Nz), dtype=bool)
     #sensor.mask[center_idx, center_y] = True
     for i in range(pts):
-        sensor.mask[start_x + i, source_pos[1], Nz - 1] = True
+        sensor.mask[start_x + i, center_y, Nz - 1] = True
 
     # Sensitivity map: 1 at the central point, 0 elsewhere
     sens = np.zeros((Nx, Ny), dtype=float)
@@ -72,12 +81,17 @@ def _create_linear_gaussian_sensor(sim_params, **kwargs):
     """
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
+
     dx = sim_params['dx']
     source_pos = sim_params['source_pos']
     length = kwargs.get('length', 1e-3)
     sigma = kwargs.get('sigma', length/4)
     pts = round(length / dx)
-    start_x = source_pos[0] - pts // 2
+    start_x = center_x - pts // 2
 
     sensor = kSensor()
     sensor.record = ['p']
@@ -90,7 +104,7 @@ def _create_linear_gaussian_sensor(sim_params, **kwargs):
 
     for i in range(pts):
         px = start_x + i
-        py = source_pos[1]
+        py = center_y
         sensor.mask[px, py, Nz - 1] = True
         sensitivity[px, py] = weights[i]
 
@@ -108,11 +122,16 @@ def _create_linear_uniform_sensor(sim_params, **kwargs):
     """
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+    
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
+
     dx = sim_params['dx']
     source_pos = sim_params['source_pos']
     length = kwargs.get('length', 1e-3)
     pts = round(length / dx)
-    start_x = source_pos[0] - pts // 2
+    start_x = center_x - pts // 2
 
     sensor = kSensor()
     sensor.record = ['p']
@@ -122,7 +141,7 @@ def _create_linear_uniform_sensor(sim_params, **kwargs):
     weight = 1.0 / pts
     for i in range(pts):
         px = start_x + i
-        py = source_pos[1]
+        py = center_y
         sensor.mask[px, py, Nz - 1] = True
         sensitivity[px, py] = weight
 
@@ -140,6 +159,11 @@ def _create_rectangular_gaussian_sensor(sim_params, **kwargs):
     """
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+    
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
+
     dx = sim_params['dx']
     source_pos = sim_params['source_pos']
     length = kwargs.get('length', 1e-3)
@@ -148,8 +172,8 @@ def _create_rectangular_gaussian_sensor(sim_params, **kwargs):
 
     lp = round(length / dx)
     wp = round(width  / dx)
-    sx = source_pos[0] - lp//2
-    sy = source_pos[1] - wp//2
+    sx = center_x - lp//2
+    sy = center_y - wp//2
 
     sensor = kSensor()
     sensor.record = ['p']
@@ -183,6 +207,11 @@ def _create_rectangular_uniform_sensor(sim_params, **kwargs):
     """
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+    
+    # Calculate center position
+    center_x = Nx // 2
+    center_y = Ny // 2
+
     dx = sim_params['dx']
     source_pos = sim_params['source_pos']
     length = kwargs.get('length', 1e-3)
@@ -190,8 +219,8 @@ def _create_rectangular_uniform_sensor(sim_params, **kwargs):
 
     lp = round(length / dx)
     wp = round(width  / dx)
-    sx = source_pos[0] - lp//2
-    sy = source_pos[1] - wp//2
+    sx = center_x - lp//2
+    sy = center_y - wp//2
 
     sensor = kSensor()
     sensor.record = ['p']
@@ -211,70 +240,122 @@ def _create_rectangular_uniform_sensor(sim_params, **kwargs):
     print("Rectangular uniform sensor created!")
     return sensor
 
-def make_snake_mask(rect_mask: np.ndarray) -> np.ndarray:
+# def make_snake_mask(rect_mask: np.ndarray) -> np.ndarray:
+#     """
+#     Given a 2D boolean array containing a single rectangular block of True,
+#     return a new boolean array of the same shape where that rectangle
+#     has been replaced by a “snake” (full rows alternating with single-edge points).
+#     """
+#     if rect_mask.dtype != bool:
+#         raise ValueError("Input mask must be of boolean type.")
+    
+#     H, W = rect_mask.shape
+    
+#     # Find the bounds of the rectangle:
+#     rows_any = np.any(rect_mask, axis=1)
+#     cols_any = np.any(rect_mask, axis=0)
+#     if not rows_any.any() or not cols_any.any():
+#         raise ValueError("Input mask contains no True values.")
+    
+#     y_min = np.argmax(rows_any)
+#     y_max = H - 1 - np.argmax(rows_any[::-1])
+#     x_min = np.argmax(cols_any)
+#     x_max = W - 1 - np.argmax(cols_any[::-1])
+    
+#     # Prepare new mask
+#     snake = np.zeros_like(rect_mask)
+    
+#     # Build the snake
+#     snake_right = True
+#     for i, y in enumerate(range(y_min, y_max + 1)):
+#         if i % 2 == 0:
+#             # even index → full horizontal segment
+#             snake[y, x_min:x_max + 1] = True
+#         else:
+#             # odd index → one True at the current edge
+#             if snake_right:
+#                 snake[y, x_max] = True
+#             else:
+#                 snake[y, x_min] = True
+#             snake_right = not snake_right
+    
+#     return snake
+
+def make_snake_mask(rect_mask: np.ndarray, row_spacing: int = 1) -> np.ndarray:
     """
     Given a 2D boolean array containing a single rectangular block of True,
-    return a new boolean array of the same shape where that rectangle
-    has been replaced by a “snake” (full rows alternating with single-edge points).
+    return a new boolean array where that rectangle has been replaced by a "snake"
+    with configurable row spacing.
+
+    Args:
+        rect_mask: 2D boolean array with a rectangular True region
+        row_spacing: Number of rows to skip between snake segments (default: 1)
+                    Values: 1 (adjacent), 2 (one row gap), 3 (two row gap), etc.
+
+    Returns:
+        New boolean array with snake pattern
     """
     if rect_mask.dtype != bool:
-        raise ValueError("Input mask must be of boolean type.")
+        raise ValueError("Input mask must be boolean")
+    if row_spacing < 0:
+        raise ValueError("row_spacing cannot be negative")
+
+    # Find rectangle bounds
+    rows = np.any(rect_mask, axis=1)
+    cols = np.any(rect_mask, axis=0)
+    if not np.any(rows) or not np.any(cols):
+        raise ValueError("No True values in input mask")
+
+    y_min, y_max = np.where(rows)[0][[0, -1]]
+    x_min, x_max = np.where(cols)[0][[0, -1]]
     
-    H, W = rect_mask.shape
-    
-    # Find the bounds of the rectangle:
-    rows_any = np.any(rect_mask, axis=1)
-    cols_any = np.any(rect_mask, axis=0)
-    if not rows_any.any() or not cols_any.any():
-        raise ValueError("Input mask contains no True values.")
-    
-    y_min = np.argmax(rows_any)
-    y_max = H - 1 - np.argmax(rows_any[::-1])
-    x_min = np.argmax(cols_any)
-    x_max = W - 1 - np.argmax(cols_any[::-1])
-    
-    # Prepare new mask
     snake = np.zeros_like(rect_mask)
+    right_edge = True  # Toggle for alternating sides
     
-    # Build the snake
-    snake_right = True
-    for i, y in enumerate(range(y_min, y_max + 1)):
-        if i % 2 == 0:
-            # even index → full horizontal segment
-            snake[y, x_min:x_max + 1] = True
-        else:
-            # odd index → one True at the current edge
-            if snake_right:
-                snake[y, x_max] = True
-            else:
-                snake[y, x_min] = True
-            snake_right = not snake_right
+    y = y_min
+    while y <= y_max:
+        # Add horizontal line
+        snake[y, x_min:x_max+1] = True
+        
+        # Add vertical connection lines
+        if y + 1 <= y_max:
+            for _ in range(row_spacing + 1):
+                if right_edge:
+                    snake[y+1, x_max] = True
+                else:
+                    snake[y+1, x_min] = True
+                y += 1
+                if y >= y_max:
+                    break
+        
+        right_edge = not right_edge
+        y += 1
     
     return snake
 
 
-def _create_snake_sensor(sim_params, **kwargs):
+def _create_snake_gaussian_sensor(sim_params, **kwargs):
     """
     Snake-shaped sensor defined by a snake path within a rectangular region.
-    First creates a rectangular sensor (uniform or gaussian), then applies a snake-shaped
+    First creates a rectangular sensor gaussian, then applies a snake-shaped
     mask, zeroes out sensitivity outside the snake, and renormalizes.
-    Optional kwargs: length (m), width (m), distribution ('uniform'|'gaussian'), sigma (m), segments (int)
+    Optional kwargs: length (m), width (m), sigma (m), segments (int)
     """
-    dist = kwargs.get('distribution', 'uniform')
+    #dist = kwargs.get('distribution', 'uniform')
 
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
-    
+
+    row_spacing = kwargs.get('row_spacing', 1)
+    print("row spacing: ", row_spacing)
+
     # Build base rectangular sensor for distribution
-    if dist == 'uniform':
-        base = _create_rectangular_uniform_sensor(sim_params, **kwargs)
-    else:
-        base = _create_rectangular_gaussian_sensor(sim_params, **kwargs)
+    base = _create_rectangular_gaussian_sensor(sim_params, **kwargs)
     rect_mask = base.mask
     rect_sens = base.sensitivity_map
 
     rect_mask_slice = rect_mask[ :, :, Nz - 1]
-    mask_snake_slice = make_snake_mask(rect_mask_slice)
+    mask_snake_slice = make_snake_mask(rect_mask_slice, row_spacing=row_spacing)
 
     # Apply snake mask to sensitivity and renormalize
     sens = rect_sens * mask_snake_slice
@@ -291,18 +372,69 @@ def _create_snake_sensor(sim_params, **kwargs):
     return sensor
 
 
-def _create_rectangular_checkerboard_sensor(sim_params, **kwargs):
+def _create_snake_uniform_sensor(sim_params, **kwargs):
     """
-    Rectangular sensor (uniform or gaussian) with checkerboard masking.
-    Optional kwargs: length (m), width (m), distribution ('uniform'|'gaussian'), sigma (m)
+    Snake-shaped sensor defined by a snake path within a rectangular region.
+    First creates a rectangular sensor uniform, then applies a snake-shaped
+    mask, zeroes out sensitivity outside the snake, and renormalizes.
+    Optional kwargs: length (m), width (m), sigma (m), segments (int)
     """
-    dist   = kwargs.get('distribution', 'uniform')
+    #dist = kwargs.get('distribution', 'uniform')
+
+    kgrid = sim_params['kgrid']
+    Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
+
+    row_spacing = kwargs.get('row_spacing', 1)
+    
+    # Build base rectangular sensor for distribution
+    base = _create_rectangular_uniform_sensor(sim_params, **kwargs)
+    rect_mask = base.mask
+    rect_sens = base.sensitivity_map
+
+    rect_mask_slice = rect_mask[ :, :, Nz - 1]
+    mask_snake_slice = make_snake_mask(rect_mask_slice, row_spacing=row_spacing)
+
+    # Apply snake mask to sensitivity and renormalize
+    sens = rect_sens * mask_snake_slice
+    total = sens.sum()
+    if total > 0:
+        sens = sens / total
+
+    # Build final sensor
+    sensor = kSensor()
+    sensor.record = ['p']
+    sensor.mask = np.zeros((Nx, Ny, Nz), dtype=bool)
+    sensor.mask[ :, :, Nz - 1] = mask_snake_slice
+    sensor.sensitivity_map = sens
+    return sensor
+
+
+def _create_rectangular_checkerboard_gaussian_sensor(sim_params, **kwargs):
+    """
+    Rectangular sensor gaussian with checkerboard masking.
+    Optional kwargs: length (m), width (m), sigma (m)
+    """
+    #dist   = kwargs.get('distribution', 'uniform')
 
     # First create a full rectangular sensor
-    if dist == 'uniform':
-        sensor = _create_rectangular_uniform_sensor(sim_params, **kwargs)
-    else:
-        sensor = _create_rectangular_gaussian_sensor(sim_params, **kwargs)
+    sensor = _create_rectangular_gaussian_sensor(sim_params, **kwargs)
+    # Apply checkerboard pattern to mask only
+    Nx, Ny, Nz = sensor.mask.shape
+    # create checkerboard boolean matrix: True on (i+j)%2==0
+    checker = ((np.add.outer(np.arange(Nx), np.arange(Ny))) % 2 == 0)
+    sensor.mask[:, :, Nz - 1] = sensor.mask[:, :, Nz - 1] & checker
+    # sensitivity_map untouched
+    return sensor
+
+def _create_rectangular_checkerboard_uniform_sensor(sim_params, **kwargs):
+    """
+    Rectangular sensor uniform with checkerboard masking.
+    Optional kwargs: length (m), width (m), sigma (m)
+    """
+    #dist   = kwargs.get('distribution', 'uniform')
+
+    # First create a full rectangular sensor
+    sensor = _create_rectangular_uniform_sensor(sim_params, **kwargs)
     # Apply checkerboard pattern to mask only
     Nx, Ny, Nz = sensor.mask.shape
     # create checkerboard boolean matrix: True on (i+j)%2==0
@@ -319,8 +451,10 @@ _TYPE_MAP = {
     4: _create_linear_uniform_sensor,
     5: _create_rectangular_gaussian_sensor,
     6: _create_rectangular_uniform_sensor,
-    7: _create_snake_sensor,
-    8: _create_rectangular_checkerboard_sensor,
+    7: _create_snake_gaussian_sensor,
+    8: _create_snake_uniform_sensor,
+    9: _create_rectangular_checkerboard_gaussian_sensor,
+    10: _create_rectangular_checkerboard_uniform_sensor,
 }
 
 
@@ -329,12 +463,14 @@ def create_sensor_3D(sensor_type: int, sim_params: dict, **kwargs):
     Factory: create a 3D sensor by type:
       1: point
       2: linear delta
-      3: linear Gaussian
+      3: linear gaussian
       4: linear uniform
       5: rectangular gaussian
-      6: ectangular uniform
-      7: snake-shaped linear
-      8: rectangular + checkerboard
+      6: rectangular uniform
+      7: snake-shaped linear gaussian
+      8: snake-shaped linear uniform
+      9: rectangular + checkerboard gaussian
+      10: rectangular + checkerboard uniform
     """
     try:
         creator = _TYPE_MAP[sensor_type]
@@ -346,6 +482,7 @@ def create_sensor_3D(sensor_type: int, sim_params: dict, **kwargs):
 
 def plot_sensor_sensitivity_and_save(sensor, sim_params, sensor_type: int, output_dir: str):
     """Plot sensor mask and sensitivity side by side in the XY plane, and save to disk.
+    Creates a timestamped subdirectory for each trial under the sensor-specific directory.
 
     Args:
         sensor: kSensor object with .mask and optional .sensitivity_map
@@ -353,15 +490,8 @@ def plot_sensor_sensitivity_and_save(sensor, sim_params, sensor_type: int, outpu
         sensor_type: int code for sensor geometry (see SENSOR_FACTORY)
         output_dir: base directory where plots will be saved
 
-    Factory mapping for sensor_type:
-      1: point
-      2: linear delta
-      3: linear gaussian
-      4: linear uniform
-      5: rectangular gaussian
-      6: rectangular uniform
-      7: snake-shaped linear
-      8: rectangular + checkerboard
+    Returns:
+        str: Full path to the timestamped directory where files were saved
     """
     # Map sensor_type codes to descriptive names
     SENSOR_FACTORY = {
@@ -371,31 +501,41 @@ def plot_sensor_sensitivity_and_save(sensor, sim_params, sensor_type: int, outpu
         4: 'linear_uniform',
         5: 'rectangular_gaussian',
         6: 'rectangular_uniform',
-        7: 'snake_linear',
-        8: 'rect_checkerboard'
+        7: 'snake_linear_gaussian',
+        8: 'snake_linear_uniform',
+        9: 'rect_checkerboard_gaussian',
+        10: 'rect_checkerboard_uniform'
     }
-    # Determine folder name
+    
+    # Create timestamp for this trial
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Determine folder structure
     sensor_name = SENSOR_FACTORY.get(sensor_type, f'type_{sensor_type}')
-    save_dir = os.path.join(output_dir, sensor_name)
+    save_dir = os.path.join(output_dir, sensor_name, timestamp)  # Add timestamp subdirectory
     os.makedirs(save_dir, exist_ok=True)
+
 
     # Extract grid dims
     kgrid = sim_params['kgrid']
     Nx, Ny, Nz = kgrid.Nx, kgrid.Ny, kgrid.Nz
 
-    # Determine 2D mask and sensitivity
+    # Determine 2D mask and sensitivity based on simulation dimension
     if sim_params.get('simulation_type') == '3D':
         mask_2d = sensor.mask[:, :, Nz - 1]
         sens_map = getattr(sensor, 'sensitivity_map', None)
-        # If a full 3D map is provided, assume last z-slice
-        sens_2d = sens_map[:, :, Nz - 1] if sens_map is not None else None
+        sens_2d = sens_map if sens_map is not None else None
+        #sens_2d = sens_map[:, :, z_idx] if sens_map is not None else None
     else:
         mask_2d = sensor.mask
         sens_map = getattr(sensor, 'sensitivity_map', None)
         sens_2d = sens_map if sens_map is not None else None
 
-    # Fallback to mask if no sensitivity_map
-    sens_plot = sens_2d if sens_2d is not None else mask_2d.astype(float)
+    # Prepare sensitivity for plotting (fallback to mask if no sensitivity_map)
+    if sens_2d is None:
+        sens_plot = mask_2d.astype(float)
+    else:
+        sens_plot = sens_2d
 
     # Plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
@@ -412,12 +552,14 @@ def plot_sensor_sensitivity_and_save(sensor, sim_params, sensor_type: int, outpu
 
     plt.tight_layout()
 
-    # Save to file instead of showing
+    # Save to file
     save_path = os.path.join(save_dir, 'sensor.png')
     fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
     print(f"Saved sensor plot to: {save_path}")
+
+    return save_dir  # Return the timestamped directory path
 
 
 def plot_sensor_sensitivity(sensor, sim_params):
