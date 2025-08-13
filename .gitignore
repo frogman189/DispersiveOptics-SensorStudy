@@ -28,6 +28,7 @@ MANIFEST
 
 # project files
 output_results/*
+cross_sensor_center_compare.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
