@@ -6,6 +6,7 @@ from setup_simulation import setup_simulation, run_simulation
 from sensors import create_sensor_3D, plot_sensor_sensitivity_and_save
 from post_processing import process_sensor_data, analyze_sensor_performance
 from match_filter import compare_detection_thresholds, plot_presure_and_noise_presure_over_time, apply_match_filter, plot_match_filter_results, calculate_detector_metrics
+from comparison import compare_sensor_signals
 
 
 def save_experiment_summary(output_dir: str,  
@@ -13,7 +14,8 @@ def save_experiment_summary(output_dir: str,
                           source_position,
                           performance_metrics: dict,
                           detector_metrics: dict,
-                          detection_comparison: dict):
+                          detection_comparison: dict,
+                          signals_comparations: dict):
     """
     Save experiment setup and results to a summary text file, including complete matched filter comparison.
     
@@ -87,6 +89,17 @@ def save_experiment_summary(output_dir: str,
     detection_str += f"{'SNR improved from':>30} {detection_comparison['raw_snr']:.1f} to {detection_comparison['filtered_snr']:.1f}\n"
     detection_str += f"{'Effective improvement':>30}: {detection_comparison['improvement_factor']:.1f}x\n"
 
+    # write peak SNRs in dB if provided
+    comparation_str = ""
+    comparation_str = "\n=== SIGNAL AND AUTOCORRELATION ANALYSIS ===\n"
+
+    comparation_str += f"{'Center peak SNR (dB)':>30}: {signals_comparations['center_snr_db']:.1f}\n"
+    comparation_str += f"{'Edge peak SNR (dB)':>30}: {signals_comparations['edge_snr_db']:.1f}\n"
+    comparation_str += f"{'Center autocorr width (us)':>30}: {signals_comparations['center_autocorr_width_us']:.1f}\n"
+    comparation_str += f"{'Edge autocorr width (us)':>30}: {signals_comparations['edge_autocorr_width_us']:.1f}\n"
+    comparation_str += f"{'Center PSR (dB)':>30}: {signals_comparations['center_psr_db']:.1f}\n"
+    comparation_str += f"{'Edge PSR (dB)':>30}: {signals_comparations['edge_psr_db']:.1f}\n"
+
     # Write to file
     with open(summary_path, 'w') as f:
         f.write("=== EXPERIMENT SUMMARY ===\n")
@@ -98,6 +111,7 @@ def save_experiment_summary(output_dir: str,
         f.write(detector_metrics_str)
         if detection_comparison:
             f.write(detection_str)
+        f.write(comparation_str)
     
     print(f"Experiment summary saved to: {summary_path}")
     return summary_path
@@ -129,7 +143,7 @@ def run_full_simulation(sensor_params, source_position, output_dir, snr_db=10):
 
     # Extraction sensor recording and applying the sensitivity of the sensor
     sensor_mask_original_size = np.squeeze(sensor.mask[sim_params['pml_size']:-sim_params['pml_size'], sim_params['pml_size']:-sim_params['pml_size'], sim_params['sensor_plane']])
-    _, weighted_p, _ = process_sensor_data(sensor_mask_original_size, sensor.sensitivity_map, sensor_data['p'])
+    _, weighted_p, info_dict = process_sensor_data(sensor_mask_original_size, sensor.sensitivity_map, sensor_data['p'])
 
     performance_metrics = analyze_sensor_performance(
         p_data=sensor_data['p'],
@@ -158,6 +172,8 @@ def run_full_simulation(sensor_params, source_position, output_dir, snr_db=10):
         source_pressure=1e6,
         snr_db=snr_db)
     
+    signals_comparations = compare_sensor_signals(info_dict, sensor.sensitivity_map, weighted_p, match_filter_results, sim_params, save_dir)
+    
     
     summary_file = save_experiment_summary(
         output_dir=save_dir,
@@ -165,7 +181,8 @@ def run_full_simulation(sensor_params, source_position, output_dir, snr_db=10):
         source_position=source_position,
         performance_metrics=performance_metrics,
         detector_metrics=detector_metrics,
-        detection_comparison=compare_detection_performance_results
+        detection_comparison=compare_detection_performance_results,
+        signals_comparations=signals_comparations
     )
 
 
@@ -177,7 +194,7 @@ def main():
     width_lst = [1e-3]
     sigma_lst = [0.3e-3]
     source_position_lst = ['center', 'lateral_offset', 'diagonal_offset']
-    row_spacing_snake_lst = [0, 1, 2]
+    row_spacing_snake_lst = [0]
 
     for sensor_type in sensor_types_lst:
         for length in length_lst:

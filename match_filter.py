@@ -43,6 +43,9 @@ def add_gaussian_noise(signal: np.ndarray,
 
     return noisy_signal
 
+def add_noise_fixed_sigma(signal: np.ndarray, sigma: float) -> np.ndarray:
+    noise = np.random.normal(0.0, sigma, size=signal.shape)
+    return signal + noise
 
 
 def plot_presure_and_noise_presure_over_time(p, kgrid, snr_db=10, save_to_dir=False, output_dir=None):
@@ -56,12 +59,10 @@ def plot_presure_and_noise_presure_over_time(p, kgrid, snr_db=10, save_to_dir=Fa
         save_to_dir (bool): If True, saves plot to output_dir instead of showing.
         output_dir (str): Directory path to save the plot when save_to_dir=True.
     """
-    # Add Gaussian noise to p
-    noise_p = add_gaussian_noise(p, snr_db=snr_db)
-
+    
     # Sum over spatial axes to get time series (shape: Nt)
     p_total = np.sum(p, axis=tuple(range(1, p.ndim)))
-    p_total_noisy = np.sum(noise_p, axis=tuple(range(1, noise_p.ndim)))
+    p_total_noisy = add_gaussian_noise(p_total, snr_db=snr_db)
 
     # Flatten time axis
     t = kgrid.t_array.flatten()
@@ -167,7 +168,8 @@ def apply_match_filter(p: np.ndarray, kgrid, snr_db: float = 10, win_samples: in
         'received':        received,
         'lags':            lags_pos,
         'matched_output':  corr_pos,
-        'detection_time':  t_detect
+        'detection_time':  t_detect,
+        'template':        template
     }
 
 
@@ -433,48 +435,139 @@ def calculate_detector_metrics(p_data: np.ndarray,
     }
 
 
+# def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
+#     """
+#     Properly compares detection thresholds before/after matched filtering
+    
+#     Args:
+#         p_data: Clean pressure data (without noise)
+#         kgrid: Simulation grid
+#         source_pressure: Known source amplitude in Pa
+#         snr_db: Noise level to add
+#         detection_sigma: Detection criterion (e.g., 5σ)
+    
+#     Returns:
+#         dict: Contains meaningful threshold comparison
+#     """
+#     # 1. Create realistic noisy signal
+#     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
+#     noisy_signal = add_gaussian_noise(clean_signal, snr_db)
+    
+#     # 2. Calculate raw detection threshold
+#     raw_noise_floor = np.std(noisy_signal - clean_signal)
+#     raw_snr = np.max(clean_signal) / raw_noise_floor
+#     raw_threshold = source_pressure / raw_snr * detection_sigma
+    
+#     # 3. Apply matched filter
+#     mf_result = apply_match_filter(p_data, kgrid, snr_db)
+    
+#     # 4. Calculate filtered detection threshold
+#     filtered_noise = mf_result['noise_only']
+#     filtered_output = mf_result['matched_output']
+    
+#     filtered_noise_floor = np.std(filtered_noise)
+#     filtered_snr = np.max(filtered_output) / filtered_noise_floor
+#     filtered_threshold = source_pressure / filtered_snr * detection_sigma
+    
+#     # 5. Verify improvement makes physical sense
+#     if filtered_threshold >= raw_threshold:
+#         raise ValueError("Matched filter should improve detection! Check your implementation")
+    
+#     return {
+#         'raw_threshold_pa': raw_threshold,
+#         'filtered_threshold_pa': filtered_threshold,
+#         'improvement_factor': raw_threshold / filtered_threshold,
+#         'raw_snr': raw_snr,
+#         'filtered_snr': filtered_snr
+#     }
+
+
+# def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
+#     # 1. Create realistic noisy signal
+#     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
+#     noisy_signal = add_gaussian_noise(clean_signal, snr_db)
+    
+#     # 2. Calculate raw detection threshold
+#     raw_noise_floor = np.std(noisy_signal - clean_signal)
+#     raw_snr = np.max(clean_signal) / raw_noise_floor
+#     raw_threshold = source_pressure / raw_snr * detection_sigma
+    
+#     # 3. Apply matched filter
+#     mf_result = apply_match_filter(p_data, kgrid, snr_db)
+    
+#     # 4. Calculate filtered detection threshold (FIXED)
+#     y = mf_result['matched_output']           # correlation-domain output
+#     abs_y = np.abs(y)
+#     peak_idx = np.argmax(abs_y)
+
+#     # exclude the main lobe with a small guard band
+#     guard = max(5, len(y)//100)
+#     mask = np.ones_like(y, dtype=bool)
+#     mask[max(0, peak_idx-guard):min(len(y), peak_idx+guard+1)] = False
+
+#     filtered_noise_floor = np.std(y[mask]) + 1e-12
+#     filtered_snr = abs_y[peak_idx] / filtered_noise_floor
+#     filtered_threshold = source_pressure / filtered_snr * detection_sigma
+    
+#     # # 5. Verify improvement makes physical sense
+#     # if filtered_threshold >= raw_threshold:
+#     #     raise ValueError("Matched filter should improve detection! Check your implementation")
+    
+#     return {
+#         'raw_threshold_pa': raw_threshold,
+#         'filtered_threshold_pa': filtered_threshold,
+#         'improvement_factor': raw_threshold / filtered_threshold,
+#         'raw_snr': raw_snr,
+#         'filtered_snr': filtered_snr
+#     }
+
+
 def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
     """
     Properly compares detection thresholds before/after matched filtering
-    
-    Args:
-        p_data: Clean pressure data (without noise)
-        kgrid: Simulation grid
-        source_pressure: Known source amplitude in Pa
-        snr_db: Noise level to add
-        detection_sigma: Detection criterion (e.g., 5σ)
-    
-    Returns:
-        dict: Contains meaningful threshold comparison
+    with correct SNR calculation in matched filter domain.
     """
     # 1. Create realistic noisy signal
     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
     noisy_signal = add_gaussian_noise(clean_signal, snr_db)
     
-    # 2. Calculate raw detection threshold
+    # 2. Calculate raw detection threshold (time domain)
     raw_noise_floor = np.std(noisy_signal - clean_signal)
     raw_snr = np.max(clean_signal) / raw_noise_floor
     raw_threshold = source_pressure / raw_snr * detection_sigma
     
     # 3. Apply matched filter
     mf_result = apply_match_filter(p_data, kgrid, snr_db)
+    y = mf_result['matched_output']  # Correlation-domain output
     
-    # 4. Calculate filtered detection threshold
-    filtered_noise = mf_result['noise_only']
-    filtered_output = mf_result['matched_output']
+    # 4. Calculate filtered SNR properly
+    # Find main lobe
+    peak_idx = np.argmax(np.abs(y))
+    main_lobe_width = len(mf_result['template'])  # Width of our matched filter
     
-    filtered_noise_floor = np.std(filtered_noise)
-    filtered_snr = np.max(filtered_output) / filtered_noise_floor
+    # Create noise measurement mask (exclude main lobe + guard band)
+    guard_band = main_lobe_width // 2
+    noise_mask = np.ones(len(y), dtype=bool)
+    noise_mask[max(0, peak_idx-guard_band-main_lobe_width):min(len(y), peak_idx+guard_band+main_lobe_width)] = False
+    
+    # Verify we have enough noise samples
+    if np.sum(noise_mask) < 100:
+        noise_mask = np.ones(len(y), dtype=bool)
+        noise_mask[peak_idx-50:peak_idx+50] = False
+    
+    filtered_noise_floor = np.std(y[noise_mask])
+    filtered_snr = np.abs(y[peak_idx]) / (filtered_noise_floor + 1e-12)  # Prevent division by zero
     filtered_threshold = source_pressure / filtered_snr * detection_sigma
     
-    # 5. Verify improvement makes physical sense
-    if filtered_threshold >= raw_threshold:
-        raise ValueError("Matched filter should improve detection! Check your implementation")
+    # 5. Verify results make physical sense
+    if filtered_noise_floor <= 0:
+        raise ValueError("Invalid noise floor measurement after matched filtering")
     
     return {
         'raw_threshold_pa': raw_threshold,
         'filtered_threshold_pa': filtered_threshold,
         'improvement_factor': raw_threshold / filtered_threshold,
         'raw_snr': raw_snr,
-        'filtered_snr': filtered_snr
+        'filtered_snr': filtered_snr,
+        'main_lobe_width': main_lobe_width  # For debugging
     }
