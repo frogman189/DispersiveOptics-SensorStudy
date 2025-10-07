@@ -240,60 +240,20 @@ def _create_rectangular_uniform_sensor(sim_params, **kwargs):
     print("Rectangular uniform sensor created!")
     return sensor
 
-# def make_snake_mask(rect_mask: np.ndarray) -> np.ndarray:
-#     """
-#     Given a 2D boolean array containing a single rectangular block of True,
-#     return a new boolean array of the same shape where that rectangle
-#     has been replaced by a “snake” (full rows alternating with single-edge points).
-#     """
-#     if rect_mask.dtype != bool:
-#         raise ValueError("Input mask must be of boolean type.")
-    
-#     H, W = rect_mask.shape
-    
-#     # Find the bounds of the rectangle:
-#     rows_any = np.any(rect_mask, axis=1)
-#     cols_any = np.any(rect_mask, axis=0)
-#     if not rows_any.any() or not cols_any.any():
-#         raise ValueError("Input mask contains no True values.")
-    
-#     y_min = np.argmax(rows_any)
-#     y_max = H - 1 - np.argmax(rows_any[::-1])
-#     x_min = np.argmax(cols_any)
-#     x_max = W - 1 - np.argmax(cols_any[::-1])
-    
-#     # Prepare new mask
-#     snake = np.zeros_like(rect_mask)
-    
-#     # Build the snake
-#     snake_right = True
-#     for i, y in enumerate(range(y_min, y_max + 1)):
-#         if i % 2 == 0:
-#             # even index → full horizontal segment
-#             snake[y, x_min:x_max + 1] = True
-#         else:
-#             # odd index → one True at the current edge
-#             if snake_right:
-#                 snake[y, x_max] = True
-#             else:
-#                 snake[y, x_min] = True
-#             snake_right = not snake_right
-    
-#     return snake
+
 
 def make_snake_mask(rect_mask: np.ndarray, row_spacing: int = 1) -> np.ndarray:
     """
     Given a 2D boolean array containing a single rectangular block of True,
     return a new boolean array where that rectangle has been replaced by a "snake"
-    with configurable row spacing.
+    that starts from the center row and alternates direction outward.
 
     Args:
         rect_mask: 2D boolean array with a rectangular True region
         row_spacing: Number of rows to skip between snake segments (default: 1)
-                    Values: 1 (adjacent), 2 (one row gap), 3 (two row gap), etc.
 
     Returns:
-        New boolean array with snake pattern
+        New boolean array with snake pattern starting from center
     """
     if rect_mask.dtype != bool:
         raise ValueError("Input mask must be boolean")
@@ -310,26 +270,73 @@ def make_snake_mask(rect_mask: np.ndarray, row_spacing: int = 1) -> np.ndarray:
     x_min, x_max = np.where(cols)[0][[0, -1]]
     
     snake = np.zeros_like(rect_mask)
-    right_edge = True  # Toggle for alternating sides
     
-    y = y_min
-    while y <= y_max:
-        # Add horizontal line
-        snake[y, x_min:x_max+1] = True
+    # Calculate center row - this should be a FULL horizontal row
+    center_row = (y_min + y_max) // 2
+    
+    # Start with center row (full horizontal)
+    snake[center_row, x_min:x_max+1] = True
+    current_direction = False  # False = right to left, True = left to right
+    
+    # Build upward from center
+    row = center_row - 1
+    while row >= y_min:
+        # Add vertical connection (partial row)
+        if current_direction:  # Previous row was left to right
+            snake[row, x_max] = True  # Vertical down from right edge
+        else:  # Previous row was right to left
+            snake[row, x_min] = True  # Vertical down from left edge
         
-        # Add vertical connection lines
-        if y + 1 <= y_max:
-            for _ in range(row_spacing + 1):
-                if right_edge:
-                    snake[y+1, x_max] = True
-                else:
-                    snake[y+1, x_min] = True
-                y += 1
-                if y >= y_max:
-                    break
+        # Add row spacing gaps
+        for i in range(row_spacing):
+            row -= 1
+            if row < y_min:
+                break
+            if current_direction:
+                snake[row, x_max] = True
+            else:
+                snake[row, x_min] = True
         
-        right_edge = not right_edge
-        y += 1
+        row -= 1
+        if row < y_min:
+            break
+            
+        # Add full horizontal row (alternating direction)
+        snake[row, x_min:x_max+1] = True
+        current_direction = not current_direction
+        
+        row -= 1
+    
+    # Reset direction and build downward from center
+    current_direction = True  # Center row was right to left
+    row = center_row + 1
+    
+    while row <= y_max:
+        # Add vertical connection (partial row)
+        if current_direction:  # Previous row was left to right
+            snake[row, x_max] = True  # Vertical up from right edge
+        else:  # Previous row was right to left
+            snake[row, x_min] = True  # Vertical up from left edge
+        
+        # Add row spacing gaps
+        for i in range(row_spacing):
+            row += 1
+            if row > y_max:
+                break
+            if current_direction:
+                snake[row, x_max] = True
+            else:
+                snake[row, x_min] = True
+        
+        row += 1
+        if row > y_max:
+            break
+            
+        # Add full horizontal row (alternating direction)
+        snake[row, x_min:x_max+1] = True
+        current_direction = not current_direction
+        
+        row += 1
     
     return snake
 

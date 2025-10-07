@@ -43,8 +43,8 @@ def add_gaussian_noise(signal: np.ndarray,
 
     return noisy_signal
 
-def add_noise_fixed_sigma(signal: np.ndarray, sigma: float) -> np.ndarray:
-    noise = np.random.normal(0.0, sigma, size=signal.shape)
+def add_noise_fixed_sigma(signal: np.ndarray, sigma=100) -> np.ndarray:
+    noise = np.random.normal(loc=0.0, scale=sigma, size=signal.shape)
     return signal + noise
 
 
@@ -62,8 +62,8 @@ def plot_presure_and_noise_presure_over_time(p, kgrid, snr_db=10, save_to_dir=Fa
     
     # Sum over spatial axes to get time series (shape: Nt)
     p_total = np.sum(p, axis=tuple(range(1, p.ndim)))
-    p_total_noisy = add_gaussian_noise(p_total, snr_db=snr_db)
-
+    #p_total_noisy = add_gaussian_noise(p_total, snr_db=snr_db)
+    p_total_noisy = add_noise_fixed_sigma(p_total, sigma=100)
     # Flatten time axis
     t = kgrid.t_array.flatten()
 
@@ -100,150 +100,124 @@ def plot_presure_and_noise_presure_over_time(p, kgrid, snr_db=10, save_to_dir=Fa
 
 
 
-def apply_match_filter(p: np.ndarray, kgrid, snr_db: float = 10, win_samples: int = 100) -> dict:
+
+def apply_match_filter(p: np.ndarray, kgrid, sigma_noise: float, win_samples: int = 200, remove_dc: bool = True) -> dict:
     """
-    Apply a matched filter to a spatial pulse to detect its arrival time, with detailed visualization.
+    Apply a matched filter to a spatially-summed pulse and compute **comparable** detection SNRs.
+
+    Comparable metrics:
+        Raw SNR (RMS):  RMS(signal over template window) / σ
+        MF SNR:         peak(|corr(received, unit_energy_template)|) / σ
+    In AWGN and perfect template match, MF gain ≈ √M where M = win_samples.
+
     Args:
-        p (np.ndarray): Multi-dimensional pulse data (time × spatial dims).
-        kgrid: Object with `t_array` attribute (shape (1, Nt) or (Nt, 1)) giving time vector (s).
-        snr_db (float): Desired signal-to-noise ratio, in dB.
-        win_samples (int): Number of samples for the template window around the pulse peak.
+        p: Pulse data (Nt, *spatial*). Will be summed over spatial dims.
+        kgrid: Has t_array (Nt,).
+        sigma_noise: Std of added white Gaussian noise (same for all sensors).
+        win_samples: Template length M (samples) centered on the clean peak.
+        remove_dc: Subtract mean from template and received before processing.
 
-    Returns:
-        dict: {
-            'noise_only': np.ndarray, raw noise component (p_noisy - p_total), shape (Nt,);
-            'clean_pulse': np.ndarray, spatially summed pulse before noise, zero-mean, shape (Nt,);
-            'received': np.ndarray, zero-mean noisy signal, shape (Nt,);
-            'lags': np.ndarray, causal lag times for correlation (s), shape (N_lags,);
-            'matched_output': np.ndarray, normalized matched-filter output, shape (N_lags,);
-            'detection_time': float, estimated pulse arrival time (s).
-        }
+    Returns: dict with signals, indices, SNRs, etc.
     """
-    # 1) Collapse spatially into 1-D clean pulse
-    p_total = np.sum(p, axis=tuple(range(1, p.ndim)))
-    t = kgrid.t_array.flatten()
-    dt = t[1] - t[0]
+    # 1) Collapse spatial dims
+    p_total = np.sum(p, axis=tuple(range(1, p.ndim)))  # (Nt,)
+    t = np.asarray(kgrid.t_array).reshape(-1)
+    dt = float(t[1] - t[0])
 
-    # 2) Add noise and compute pure noise
-    p_noisy = add_gaussian_noise(p_total, snr_db=snr_db)
-    noise_only = p_noisy - p_total
+    # 2) Add white noise
+    rng = np.random.default_rng()
+    noise_only = rng.normal(0.0, sigma_noise, size=p_total.shape)
+    p_noisy = p_total + noise_only
 
-    # 3) Locate main pulse and extract template window
-    peak_idx_clean = np.argmax(np.abs(p_total))
-    i0 = max(0, peak_idx_clean - win_samples // 2)
-    i1 = min(len(p_total), peak_idx_clean + win_samples // 2)
-    template = p_total[i0:i1].copy()
-    if template.size == 0 or np.allclose(template, 0):
-        raise RuntimeError(f"Template window [{i0}:{i1}] is empty or zero.")
+    # 3) Template window around CLEAN peak (to avoid noise jitter in picking the window)
+    peak_idx_clean = int(np.argmax(np.abs(p_total)))
+    M = int(win_samples)
+    half = M // 2
+    i0 = max(0, peak_idx_clean - half)
+    i1 = min(len(p_total), i0 + M)
+    if (i1 - i0) < M:
+        i0 = max(0, i1 - M)
 
-    # 4) Zero-mean & unit-energy normalize the template
-    template -= np.mean(template)
-    E = np.dot(template, template)
-    template /= np.sqrt(E)
+    template = p_total[i0:i1].astype(float).copy()
+    if remove_dc:
+        template -= np.mean(template)
+    E = float(np.dot(template, template))
+    if E <= 0:
+        raise RuntimeError("Template has zero energy; try a different window.")
+    template /= np.sqrt(E)  # unit-energy
 
-    # 5) Prepare received signal and cross-correlate
-    received = p_noisy - np.mean(p_noisy)
+    # 4) Prepare received (optional DC removal using a baseline estimate)
+    received = p_noisy.astype(float)
+    if remove_dc:
+        # subtract a global mean (or use a known pre-event baseline if you have indices)
+        received -= np.mean(received[: max(8*half, M)])  # robust-ish baseline removal
+
+    # 5) Matched filtering (cross-correlation with unit-energy template)
     corr_full = correlate(received, template, mode='full')
+    lags = correlation_lags(len(received), len(template), mode='full')
+    mask_full = (lags >= 0) & (lags <= (len(received) - M))
+    corr_use = corr_full[mask_full]
+    lags_use = lags[mask_full]
+    lags_s = lags_use * dt
 
-    # 6) Build lag axis and keep causal part
-    lags = correlation_lags(len(received), len(template), mode='full') * dt
-    pos = lags >= 0
-    lags_pos = lags[pos]
-    corr_pos = corr_full[pos]
+    peak_idx_mf = int(np.argmax(np.abs(corr_use)))
+    y_peak = float(np.abs(corr_use[peak_idx_mf]))
+    t_detect = float(lags_s[peak_idx_mf])
 
-    # 7) Find detection peak
-    peak_idx = np.argmax(corr_pos)
-    t_detect = lags_pos[peak_idx]
+    # === CONSISTENT NOISE STDs ===
+    # For unit-energy template and white noise, σ_mf == σ_raw == sigma_noise
+    # Use the known sigma to avoid contamination from signal sidelobes.
+    sigma_raw = float(np.std(noise_only, ddof=1))  # sanity check; ~ sigma_noise
+    sigma_mf = sigma_noise
 
-    #debug prints
-    # print(f"Peak of clean signal at index: {peak_idx_clean}, time: {t[peak_idx_clean]:.3e} s")
-    # print(f"Template indices: i0={i0}, i1={i1}")
-    # print(f"Template energy: {np.dot(template, template):.3e}")
-    # print(f"Matched filter peak time: {t_detect:.3e}")
+    # === COMPARABLE SNRs ===
+    # Raw SNR: RMS of the (CLEAN) signal over the SAME window M divided by σ
+    # (Using clean signal to define the signal energy; detection is on noisy data anyway.)
+    s_win = p_total[i0:i1].astype(float)
+    if remove_dc:
+        s_win = s_win - np.mean(s_win)
+    rms_signal = float(np.sqrt(np.mean(s_win**2)))
+    raw_peak = np.max(np.abs(p_noisy[i0:i1]))
+    raw_detection_snr = raw_peak / sigma_raw
+    #raw_detection_snr = rms_signal / (sigma_raw + 1e-12)
 
-    # 8) Return structured outputs
+    # MF SNR: correlation peak divided by σ (since unit-energy template)
+    mf_detection_snr = y_peak / (sigma_mf + 1e-12)
+
+    snr_improvement = mf_detection_snr / (raw_detection_snr + 1e-12)
+    print(f"SNR raw: ", raw_detection_snr)
+    print(f"SNR MF: ", mf_detection_snr)
+    print(f"SNR improvement: ", snr_improvement)
+
+    # Optional: empirical corr-domain noise check (exclude a guard around the peak)
+    guard = max(M, 100)
+    mask_noise = np.ones_like(corr_use, dtype=bool)
+    mask_noise[np.maximum(0, peak_idx_mf-guard): np.minimum(len(corr_use), peak_idx_mf+guard+1)] = False
+    if np.any(mask_noise):
+        sigma_mf_emp = float(np.std(corr_use[mask_noise], ddof=1))
+    else:
+        sigma_mf_emp = np.nan  # not enough samples
+
     return {
-        'noise_only':      noise_only,
-        'clean_pulse':     p_total,
-        'received':        received,
-        'lags':            lags_pos,
-        'matched_output':  corr_pos,
-        'detection_time':  t_detect,
-        'template':        template
+        'noise_only': noise_only,
+        'clean_pulse': p_total,
+        'received': received,
+        'lags': lags_s,
+        'matched_output': corr_use,
+        'detection_time': t_detect,
+        'template': template,
+        'indices': {'i0': i0, 'i1': i1, 'peak_idx_clean': peak_idx_clean, 'peak_idx_mf': peak_idx_mf},
+        'sigma_raw': sigma_raw,
+        'sigma_mf_theory': sigma_mf,
+        'sigma_mf_empirical': sigma_mf_emp,
+        'raw_detection_snr': raw_detection_snr,
+        'mf_detection_snr': mf_detection_snr,
+        'snr_improvement': snr_improvement,
+        'raw_threshold_5sigma': 5.0 * sigma_raw,
+        'mf_threshold_5sigma': 5.0 * sigma_mf,
     }
 
 
-
-# def apply_match_filter(p: np.ndarray, kgrid, snr_db: float = 10, win_samples: int = 100) -> dict:
-#     """
-#     Apply a matched filter to detect pulse arrival time from noisy multidimensional signal.
-
-#     Args:
-#         p (np.ndarray): Input signal, shape (Nt, ...) where time is the first dimension.
-#         kgrid: Object with 't_array' attribute (shape (Nt,) or (1, Nt)) giving time vector in seconds.
-#         snr_db (float): Desired signal-to-noise ratio (dB).
-#         win_samples (int): Template window length (samples), centered on pulse peak.
-
-#     Returns:
-#         dict with:
-#             - 'clean_pulse': 1D spatially summed signal before noise
-#             - 'received': Noisy, zero-mean signal
-#             - 'noise_only': Noise added to clean signal
-#             - 'template': Extracted and normalized matched filter template
-#             - 'lags': Time axis (s) of causal matched filter output
-#             - 'matched_output': Output of matched filter (normalized)
-#             - 'detection_time': Estimated time-of-arrival (s)
-#     """
-#     # Collapse spatial dimensions to 1D signal
-#     p_total = np.sum(p, axis=tuple(range(1, p.ndim)))
-#     t = np.ravel(kgrid.t_array)
-#     dt = t[1] - t[0]
-#     Nt = len(p_total)
-
-#     # Add noise
-#     p_noisy = add_gaussian_noise(p_total, snr_db=snr_db)
-#     noise_only = p_noisy - p_total
-
-#     # Find main pulse peak
-#     peak_idx = np.argmax(np.abs(p_total))
-#     half_win = win_samples // 2
-
-#     # Safe template windowing
-#     i0 = max(0, peak_idx - half_win)
-#     i1 = min(Nt, peak_idx + half_win)
-#     template = p_total[i0:i1].copy()
-
-#     if template.size < 5 or np.allclose(template, 0):
-#         raise ValueError("Invalid template: too small or all zeros.")
-
-#     # Normalize template: zero-mean, unit energy
-#     template -= np.mean(template)
-#     template /= np.sqrt(np.sum(template**2) + 1e-12)
-
-#     # Prepare received signal
-#     received = p_noisy - np.mean(p_noisy)
-
-#     # Matched filter via cross-correlation (standard approach)
-#     corr_full = correlate(received, template, mode='full')
-#     lags = correlation_lags(len(received), len(template), mode='full') * dt
-
-#     # Keep causal lags only
-#     pos_mask = lags >= 0
-#     lags_pos = lags[pos_mask]
-#     matched_output = corr_full[pos_mask]
-
-#     # Estimated time of arrival
-#     detection_time = lags_pos[np.argmax(matched_output)]
-
-#     return {
-#         'clean_pulse':     p_total,
-#         'received':        received,
-#         'noise_only':      noise_only,
-#         'template':        template,
-#         'lags':            lags_pos,
-#         'matched_output':  matched_output,
-#         'detection_time':  detection_time,
-#     }
 
 
 def plot_match_filter_results(results: dict,
@@ -435,91 +409,7 @@ def calculate_detector_metrics(p_data: np.ndarray,
     }
 
 
-# def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
-#     """
-#     Properly compares detection thresholds before/after matched filtering
-    
-#     Args:
-#         p_data: Clean pressure data (without noise)
-#         kgrid: Simulation grid
-#         source_pressure: Known source amplitude in Pa
-#         snr_db: Noise level to add
-#         detection_sigma: Detection criterion (e.g., 5σ)
-    
-#     Returns:
-#         dict: Contains meaningful threshold comparison
-#     """
-#     # 1. Create realistic noisy signal
-#     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
-#     noisy_signal = add_gaussian_noise(clean_signal, snr_db)
-    
-#     # 2. Calculate raw detection threshold
-#     raw_noise_floor = np.std(noisy_signal - clean_signal)
-#     raw_snr = np.max(clean_signal) / raw_noise_floor
-#     raw_threshold = source_pressure / raw_snr * detection_sigma
-    
-#     # 3. Apply matched filter
-#     mf_result = apply_match_filter(p_data, kgrid, snr_db)
-    
-#     # 4. Calculate filtered detection threshold
-#     filtered_noise = mf_result['noise_only']
-#     filtered_output = mf_result['matched_output']
-    
-#     filtered_noise_floor = np.std(filtered_noise)
-#     filtered_snr = np.max(filtered_output) / filtered_noise_floor
-#     filtered_threshold = source_pressure / filtered_snr * detection_sigma
-    
-#     # 5. Verify improvement makes physical sense
-#     if filtered_threshold >= raw_threshold:
-#         raise ValueError("Matched filter should improve detection! Check your implementation")
-    
-#     return {
-#         'raw_threshold_pa': raw_threshold,
-#         'filtered_threshold_pa': filtered_threshold,
-#         'improvement_factor': raw_threshold / filtered_threshold,
-#         'raw_snr': raw_snr,
-#         'filtered_snr': filtered_snr
-#     }
 
-
-# def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
-#     # 1. Create realistic noisy signal
-#     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
-#     noisy_signal = add_gaussian_noise(clean_signal, snr_db)
-    
-#     # 2. Calculate raw detection threshold
-#     raw_noise_floor = np.std(noisy_signal - clean_signal)
-#     raw_snr = np.max(clean_signal) / raw_noise_floor
-#     raw_threshold = source_pressure / raw_snr * detection_sigma
-    
-#     # 3. Apply matched filter
-#     mf_result = apply_match_filter(p_data, kgrid, snr_db)
-    
-#     # 4. Calculate filtered detection threshold (FIXED)
-#     y = mf_result['matched_output']           # correlation-domain output
-#     abs_y = np.abs(y)
-#     peak_idx = np.argmax(abs_y)
-
-#     # exclude the main lobe with a small guard band
-#     guard = max(5, len(y)//100)
-#     mask = np.ones_like(y, dtype=bool)
-#     mask[max(0, peak_idx-guard):min(len(y), peak_idx+guard+1)] = False
-
-#     filtered_noise_floor = np.std(y[mask]) + 1e-12
-#     filtered_snr = abs_y[peak_idx] / filtered_noise_floor
-#     filtered_threshold = source_pressure / filtered_snr * detection_sigma
-    
-#     # # 5. Verify improvement makes physical sense
-#     # if filtered_threshold >= raw_threshold:
-#     #     raise ValueError("Matched filter should improve detection! Check your implementation")
-    
-#     return {
-#         'raw_threshold_pa': raw_threshold,
-#         'filtered_threshold_pa': filtered_threshold,
-#         'improvement_factor': raw_threshold / filtered_threshold,
-#         'raw_snr': raw_snr,
-#         'filtered_snr': filtered_snr
-#     }
 
 
 def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, detection_sigma=5):
@@ -529,16 +419,18 @@ def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, dete
     """
     # 1. Create realistic noisy signal
     clean_signal = np.sum(p_data, axis=tuple(range(1, p_data.ndim)))
-    noisy_signal = add_gaussian_noise(clean_signal, snr_db)
+    noisy_signal = add_noise_fixed_sigma(clean_signal, sigma=100)
     
     # 2. Calculate raw detection threshold (time domain)
-    raw_noise_floor = np.std(noisy_signal - clean_signal)
-    raw_snr = np.max(clean_signal) / raw_noise_floor
-    raw_threshold = source_pressure / raw_snr * detection_sigma
+
     
     # 3. Apply matched filter
-    mf_result = apply_match_filter(p_data, kgrid, snr_db)
+    mf_result = apply_match_filter(p_data, kgrid, 100)
     y = mf_result['matched_output']  # Correlation-domain output
+
+    raw_noise_floor = np.std(noisy_signal - clean_signal)
+    raw_snr = mf_result['raw_detection_snr']
+    raw_threshold = (source_pressure / raw_snr) * detection_sigma
     
     # 4. Calculate filtered SNR properly
     # Find main lobe
@@ -556,8 +448,8 @@ def compare_detection_thresholds(p_data, kgrid, source_pressure, snr_db=10, dete
         noise_mask[peak_idx-50:peak_idx+50] = False
     
     filtered_noise_floor = np.std(y[noise_mask])
-    filtered_snr = np.abs(y[peak_idx]) / (filtered_noise_floor + 1e-12)  # Prevent division by zero
-    filtered_threshold = source_pressure / filtered_snr * detection_sigma
+    filtered_snr = mf_result['mf_detection_snr']
+    filtered_threshold = (source_pressure / filtered_snr) * detection_sigma
     
     # 5. Verify results make physical sense
     if filtered_noise_floor <= 0:
