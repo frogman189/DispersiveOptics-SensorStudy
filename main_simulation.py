@@ -154,15 +154,21 @@ def run_full_simulation(sensor_params, source_position, output_dir, snr_db=10):
 
     plot_presure_and_noise_presure_over_time(weighted_p, sim_params['kgrid'], snr_db=snr_db, save_to_dir=True, output_dir=save_dir)
 
-    match_filter_results = apply_match_filter(weighted_p, sim_params['kgrid'], snr_db=snr_db)
+    # match_filter_results = apply_match_filter(weighted_p, sim_params['kgrid'], snr_db=snr_db)
+    match_filter_results = apply_match_filter(weighted_p, sim_params['kgrid'], sigma_noise=100)
     plot_match_filter_results(match_filter_results, sim_params['kgrid'].t_array.flatten(), snr_db=snr_db, save_to_dir=True, output_dir=save_dir)
 
     # Calculate fundamental metrics
+    if sensor_params['sensor_type'] == 9 or sensor_params['sensor_type'] == 10:
+        detector_area = sensor_mask_original_size.size * (sim_params['kgrid'].dx ** 2)
+    else:
+        detector_area = np.sum(sensor_mask_original_size) * (sim_params['kgrid'].dx ** 2)
+
     detector_metrics = calculate_detector_metrics(
         p_data=weighted_p,
         noise_data=match_filter_results['noise_only'],
         source_pressure=1e6,
-        detector_area=np.sum(sensor_mask_original_size) * (sim_params['kgrid'].dx ** 2),
+        detector_area=detector_area,
         bandwidth=1/(2*sim_params['kgrid'].dt)  # Nyquist bandwidth
     )
 
@@ -189,7 +195,7 @@ def run_full_simulation(sensor_params, source_position, output_dir, snr_db=10):
 def main():
     output_dir = '/home/meidanzehavi/electro_optics/DispersiveOptics-SensorStudy/output_results'
 
-    sensor_types_lst = [1, 3, 4, 5, 6, 7, 8, 9, 10]
+    sensor_types_lst = [1, 2, 3, 4, 5, 6, 9, 10]
     length_lst = [1e-3]
     width_lst = [1e-3]
     sigma_lst = [0.3e-3]
